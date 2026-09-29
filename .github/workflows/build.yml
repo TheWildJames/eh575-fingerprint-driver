@@ -128,7 +128,13 @@ jobs:
           PFX="${{ runner.temp }}/fp-prefix"
           ninja -C libfprint/build install
 
+          # The freshly installed prefix must be on both search paths. Without
+          # PKG_CONFIG_PATH, pkg-config cannot see libfprint-2.pc and the
+          # tools fail with "Package libfprint-2 was not found".
+          export PKG_CONFIG_PATH="$PFX/lib/pkgconfig"
           export LD_LIBRARY_PATH="$PFX/lib"
+          pkg-config --modversion libfprint-2
+
           CFLAGS="-I$PFX/include -I$PFX/include/libfprint-2 -I$PFX/include/gusb-1 \
                   $(pkg-config --cflags gio-unix-2.0 gobject-2.0 glib-2.0 json-glib-1.0)"
           LIBS="$(pkg-config --libs libfprint-2 gusb gio-unix-2.0)"
@@ -139,6 +145,11 @@ jobs:
             gcc -O1 -Wall -o "$out" "tools/$src" $CFLAGS $LIBS
             echo "built $out"
           done
+
+          # The tools link against the local libfprint, so prove they resolve
+          # it rather than any system copy.
+          ldd build-tools/fptest2 | grep libfprint || {
+            echo "::error::fptest2 did not link against the patched library"; exit 1; }
 
       - name: Confirm no enroll/verify implementation (documented limitation)
         run: |
