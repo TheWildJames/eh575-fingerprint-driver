@@ -86,6 +86,64 @@ if ! meson --version >/dev/null 2>&1 || \
   die "cannot continue without a suitable meson"
 fi
 
+# ------------------------------------------------- glib-mkenums shim
+# Some distros ship a glib-2.0.pc that advertises glib_mkenums=/usr/bin/glib-mkenums
+# even though the binary is not installed (it lives in the -dev/-devel package).
+# meson then hard-fails with "tool variable 'glib_mkenums' contains erroneous
+# value". Detect that and shim a working copy into the prefix, with a local
+# .pc that points at it. Only done when the binary is genuinely absent.
+ensure_mkenums() {
+  if command -v glib-mkenums &>/dev/null; then
+    say "glib-mkenums found in PATH"
+    return 0
+  fi
+  if pkg-config --variable=glib_mkenums glib-2.0 2>/dev/null | grep -q . && \
+     [ -x "$(pkg-config --variable=glib_mkenums glib-2.0 2>/dev/null)" ]; then
+    say "glib-mkenums present via pkg-config"
+    return 0
+  fi
+
+  say "glib-mkenums missing (packaging gap); shimming it into the prefix"
+  command -v curl &>/dev/null || die "curl is needed to fetch glib sources"
+
+  GLIB_VER=$(pkg-config --modversion glib-2.0 2>/dev/null || echo 2.88.3)
+  GLIB_SRCDIR="$HOME/.cache/eh575-build/glib-$GLIB_VER"
+  if [ ! -d "$GLIB_SRCDIR" ]; then
+    mkdir -p "$(dirname "$GLIB_SRCDIR")"
+    curl -fsSL -o "/tmp/glib-$GLIB_VER.tar.xz" \
+      "https://download.gnome.org/sources/glib/${GLIB_VER%.*}/glib-$GLIB_VER.tar.xz" \
+      || die "could not download glib $GLIB_VER sources"
+    tar xf "/tmp/glib-$GLIB_VER.tar.xz" -C "$(dirname "$GLIB_SRCDIR")" \
+      || die "could not unpack glib sources"
+  fi
+
+  local script
+  script=$(find "$GLIB_SRCDIR" -name 'glib-mkenums.in' -print -quit)
+  [ -n "$script" ] || die "glib-mkenums.in not found in the glib source tree"
+
+  mkdir -p "$PREFIX/bin" "$PREFIX/lib/pkgconfig"
+  # The only substitution glib-mkenums.in needs is the interpreter shebang.
+  local py
+  py=$(command -v python3 || echo /usr/bin/python3)
+  sed "1s|^#!.*|#!$py|" "$script" > "$PREFIX/bin/glib-mkenums"
+  chmod +x "$PREFIX/bin/glib-mkenums" || die "could not make glib-mkenums executable"
+  "$PREFIX/bin/glib-mkenums" --help >/dev/null 2>&1 \
+    || die "the glib-mkenums shim does not run"
+
+  # Shadow glib-2.0.pc with a copy whose glib_mkenums points at the shim.
+  local syspc
+  syspc=$(pkg-config --variable=pcfiledir glib-2.0 2>/dev/null)/glib-2.0.pc
+  [ -f "$syspc" ] || die "could not locate the system glib-2.0.pc"
+  sed "s|\${bindir}/glib-mkenums|$PREFIX/bin/glib-mkenums|" "$syspc" \
+    > "$PREFIX/lib/pkgconfig/glib-2.0.pc" \
+    || die "could not write the patched glib-2.0.pc"
+
+  export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+  export PATH="$PREFIX/bin:$PATH"
+  say "glib-mkenums shim installed at $PREFIX/bin/glib-mkenums"
+}
+ensure_mkenums
+
 # ------------------------------------------------------- libfprint
 if [ ! -d "$SRC/.git" ]; then
   say "Cloning libfprint"
