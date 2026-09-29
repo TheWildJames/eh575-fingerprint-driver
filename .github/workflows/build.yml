@@ -1,0 +1,148 @@
+name: build
+
+# The point of this workflow is patch rot. MR !357 is unmerged, so libfprint
+# master moves underneath it. When that happens the patch stops applying and
+# this fails loudly, rather than a user discovering it from a broken build.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    # Weekly, Monday 06:17 UTC. Catches upstream breakage even when nobody
+    # touches this repo - the common case for a patch against a moving target.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: apply patch and build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-22.04]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            git \
+            meson \
+            ninja-build \
+            pkg-config \
+            libglib2.0-dev \
+            libglib2.0-dev-bin \
+            libgusb-dev \
+            libusb-1.0-0-dev \
+            libpixman-1-dev \
+            libcairo2-dev \
+            libjson-glib-dev \
+            libgudev-1-dev \
+            libudev-dev \
+            libssl-dev \
+            libgirepository1.0-dev \
+            gobject-introspection
+
+      - name: Clone libfprint
+        run: |
+          git clone --depth 1 https://gitlab.freedesktop.org/libfprint/libfprint.git
+          echo "LIBFPRINT_COMMIT=$(git -C libfprint rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Check the patch applies
+        run: |
+          cd libfprint
+          git apply --check ../patches/0001-add-egis0575-driver.patch
+          git apply ../patches/0001-add-egis0575-driver.patch
+          echo "patch applied cleanly"
+
+      - name: Configure
+        run: |
+          cd libfprint
+          meson setup build \
+            --prefix="${{ runner.temp }}/fp-prefix" \
+            --buildtype=release \
+            -D doc=false \
+            -D introspection=false \
+            -D drivers=all \
+            -D udev_rules=disabled \
+            -D udev_hwdb=disabled
+
+      - name: Build
+        run: ninja -C libfprint/build
+
+      - name: Verify the driver is actually in the binary
+        run: |
+          LIB=libfprint/build/libfprint/libfprint-2.so.2.0.0
+          test -f "$LIB"
+
+          # The driver object must have been compiled. Meson names driver
+          # objects "drivers_<name>.c.o" inside libfprint-drivers.a.p.
+          find libfprint/build -name '*egis0575*.o' | grep -q . \
+            || { echo "::error::egis0575 was never compiled"; exit 1; }
+
+          # The GType must be registered, or the driver is dead weight.
+          strings "$LIB" | grep -q 'fpi_device_egis0575_get_type' \
+            || { echo "::error::egis0575 GType missing from library"; exit 1; }
+
+          # The threshold override from this repo must be present.
+          strings "$LIB" | grep -q 'EGIS0575_FINGER_THRESHOLD' \
+            || { echo "::error::threshold override missing from library"; exit 1; }
+
+          echo "driver verified present in $LIB"
+
+      - name: Verify 1c7a:0575 is advertised as supported
+        run: |
+          # This is the user-visible promise: the device shows up in the
+          # supported list. Guards against a driver that builds but is not
+          # actually registered in the driver tables.
+          ./libfprint/build/libfprint/fprint-list-supported-devices \
+            | grep -q '1c7a:0575' \
+            || { echo "::error::1c7a:0575 not in supported devices"; exit 1; }
+          echo "1c7a:0575 listed as supported"
+
+      - name: Build the test tools against the patched library
+        run: |
+          PFX="${{ runner.temp }}/fp-prefix"
+          ninja -C libfprint/build install
+
+          export LD_LIBRARY_PATH="$PFX/lib"
+          CFLAGS="-I$PFX/include -I$PFX/include/libfprint-2 -I$PFX/include/gusb-1 \
+                  $(pkg-config --cflags gio-unix-2.0 gobject-2.0 glib-2.0 json-glib-1.0)"
+          LIBS="$(pkg-config --libs libfprint-2 gusb gio-unix-2.0)"
+
+          mkdir -p build-tools
+          for src in fptest2.c probe2.c probe3.c monitor.c enroll-test.c; do
+            out="build-tools/${src%.c}"
+            gcc -O1 -Wall -o "$out" "tools/$src" $CFLAGS $LIBS
+            echo "built $out"
+          done
+
+      - name: Confirm no enroll/verify implementation (documented limitation)
+        run: |
+          # The driver implements capture only. This is a known, documented
+          # limitation, not a regression - but if upstream ever adds these
+          # vfuncs, this step should start failing so the README gets updated.
+          SRC=libfprint/libfprint/drivers/egis0575.c
+          if grep -qE 'img_class->(enroll|verify|identify)' "$SRC"; then
+            echo "::warning::driver now implements enroll/verify - update the README status table"
+          else
+            echo "confirmed: capture-only, as documented"
+          fi
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ matrix.os }}
+          path: |
+            libfprint/build/meson-logs/
+          retention-days: 7

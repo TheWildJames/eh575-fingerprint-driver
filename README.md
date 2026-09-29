@@ -1,5 +1,7 @@
 # EgisTec EH575 fingerprint sensor driver for libfprint (1c7a:0575)
 
+[![build](https://github.com/TheWildJames/eh575-fingerprint-driver/actions/workflows/build.yml/badge.svg)](https://github.com/TheWildJames/eh575-fingerprint-driver/actions/workflows/build.yml)
+
 A working **capture** driver for the EgisTec EH575 swipe fingerprint sensor, ported
 from the unmerged upstream [libfprint MR !357](https://gitlab.freedesktop.org/libfprint/libfprint/-/merge_requests/357)
 onto current libfprint master.
@@ -170,3 +172,28 @@ master, plus the threshold patch and the test tooling.
   authentication, and no templates are stored anywhere.
 - Persistent storage. The driver has no working NVM-write path, by design in
   the MR; calibration bytes are read from the sensor each session.
+
+## Continuous integration
+
+`.github/workflows/build.yml` runs on every push and pull request, on
+Ubuntu 24.04 and 22.04, and weekly on Mondays whether or not anything changed.
+
+It exists for one reason: **MR !357 is unmerged**, so libfprint master moves
+underneath this patch. When upstream changes something the patch depends on,
+CI fails at the apply step and says so, instead of a user hitting a broken
+build.
+
+The workflow verifies more than "it compiles":
+
+- the patch applies cleanly to current master
+- the `egis0575` object file is actually produced by the build
+- the GType is registered in the shared library
+- the threshold override from this repo is present in the binary
+- `1c7a:0575` appears in `fprint-list-supported-devices`
+- all five test tools still compile against the patched library
+- the capture-only limitation still holds, warning if upstream ever adds
+  enroll/verify so this README gets updated
+
+A green badge means the patch still builds against today's master. It says
+nothing about whether the sensor works, which only real hardware can confirm.
+
