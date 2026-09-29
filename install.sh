@@ -205,9 +205,18 @@ LIBS="$(pkg-config --libs libfprint-2 gusb gio-unix-2.0)"
 TOOLDIR="$PREFIX/bin"
 mkdir -p "$TOOLDIR"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-for src in fptest2.c probe2.c probe3.c monitor.c; do
+# Rename to friendly names: the source files carry a numeric suffix from
+# earlier revisions that is meaningless to a user.
+declare -A TOOLNAMES=(
+  [fptest2.c]=fptest
+  [probe2.c]=probe
+  [probe3.c]=probe3
+  [monitor.c]=monitor
+  [enroll-test.c]=enroll-test
+)
+for src in "${!TOOLNAMES[@]}"; do
   [ -f "$HERE/tools/$src" ] || continue
-  gcc -O1 -o "$TOOLDIR/${src%.c}" "$HERE/tools/$src" $CFLAGS $LIBS \
+  gcc -O1 -o "$TOOLDIR/${TOOLNAMES[$src]}" "$HERE/tools/$src" $CFLAGS $LIBS \
     || die "failed to build $src"
 done
 
@@ -215,6 +224,7 @@ cat > "$TOOLDIR/eh575-env.sh" <<EOF
 # Source this to use the tools:  source $TOOLDIR/eh575-env.sh
 export LD_LIBRARY_PATH="$LIBDIR\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 export PKG_CONFIG_PATH="$PCDIR\${PKG_CONFIG_PATH:+:\$PKG_CONFIG_PATH}"
+export PATH="$TOOLDIR\${PATH:+:\$PATH}"
 export EGIS0575_FINGER_THRESHOLD="\${EGIS0575_FINGER_THRESHOLD:-0x03}"
 EOF
 
@@ -276,7 +286,7 @@ $(say "Done.")
          fptest open
          fptest capture /tmp/finger.pgm
 
-       The tool binaries are: fptest, probe, probe3, monitor
+       Tools: fptest, probe, probe3, monitor, enroll-test
 
 $(warn "This gives you image CAPTURE only.")
 $(warn "The driver has no enroll/verify implementation, so this cannot")
