@@ -97,8 +97,8 @@ ensure_mkenums() {
     say "glib-mkenums found in PATH"
     return 0
   fi
-  if pkg-config --variable=glib_mkenums glib-2.0 2>/dev/null | grep -q . && \
-     [ -x "$(pkg-config --variable=glib_mkenums glib-2.0 2>/dev/null)" ]; then
+  MKENUM_PATH=$(pkg-config --variable=glib_mkenums glib-2.0 2>/dev/null || true)
+  if [ -n "$MKENUM_PATH" ] && [ -x "$MKENUM_PATH" ]; then
     say "glib-mkenums present via pkg-config"
     return 0
   fi
@@ -242,16 +242,15 @@ case "$SYMS" in
 esac
 
 # The threshold override from this repo must have made it into the binary.
-if strings "$LIB" | grep -q 'EGIS0575_FINGER_THRESHOLD'; then
-  echo "  threshold override present"
-else
-  die "threshold override missing from $LIB"
-fi
+case "$(strings "$LIB")" in
+  *EGIS0575_FINGER_THRESHOLD*) echo "  threshold override present" ;;
+  *) die "threshold override missing from $LIB" ;;
+esac
 
 # And the user-visible promise: the device is advertised as supported.
 SD="$HOME/.cache/eh575-build/libfprint/build-local/libfprint/fprint-list-supported-devices"
 if [ -x "$SD" ]; then
-  if "$SD" | grep -q '1c7a:0575'; then
+  if printf '%s' "$("$SD")" | grep -q '1c7a:0575'; then
     echo "  1c7a:0575 listed as supported"
   else
     die "1c7a:0575 is not in the supported device list"

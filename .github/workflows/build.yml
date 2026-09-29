@@ -103,7 +103,7 @@ jobs:
 
           # The driver object must have been compiled. Meson names driver
           # objects "drivers_<name>.c.o" inside libfprint-drivers.a.p.
-          find libfprint/build -name '*egis0575*.o' -print -quit | grep -q . \
+          test -n "$(find libfprint/build -name '*egis0575*.o' -print -quit)" \
             || { echo "::error::egis0575 was never compiled"; exit 1; }
 
           # The GType must be registered, or the driver is dead weight. It is
