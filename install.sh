@@ -151,6 +151,7 @@ if [ ! -d "$SRC/.git" ]; then
   git clone --filter=blob:none https://gitlab.freedesktop.org/libfprint/libfprint.git "$SRC"
 else
   say "Updating existing libfprint checkout"
+  # reset --hard drops any previously applied patch; it is re-applied below.
   git -C "$SRC" fetch -q origin
   git -C "$SRC" reset -q --hard origin/master
 fi
@@ -158,8 +159,16 @@ say "libfprint at $(git -C "$SRC" rev-parse --short HEAD)"
 
 PATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches"
 say "Applying egis0575 driver"
-git -C "$SRC" apply "$PATCH_DIR/0001-add-egis0575-driver.patch" \
-  || die "patch did not apply. libfprint master may have changed; see the repo README."
+# git apply is not idempotent: re-running against an already-patched checkout
+# fails with "already exists in working directory". Reverse first if needed so
+# re-running the installer is safe.
+if git -C "$SRC" apply --reverse --check "$PATCH_DIR/0001-add-egis0575-driver.patch" 2>/dev/null; then
+  say "patch already applied, leaving it in place"
+else
+  git -C "$SRC" apply "$PATCH_DIR/0001-add-egis0575-driver.patch" \
+    || die "patch did not apply. libfprint master may have changed; see the repo README."
+  say "patch applied"
+fi
 
 say "Configuring (egis0575 only; avoids the SPI drivers' gudev dependency)"
 rm -rf "$SRC/build" "$SRC/build-local"
