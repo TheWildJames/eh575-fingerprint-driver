@@ -106,9 +106,13 @@ jobs:
           find libfprint/build -name '*egis0575*.o' | grep -q . \
             || { echo "::error::egis0575 was never compiled"; exit 1; }
 
-          # The GType must be registered, or the driver is dead weight.
-          strings "$LIB" | grep -q 'fpi_device_egis0575_get_type' \
+          # The GType must be registered, or the driver is dead weight. It is
+          # a *local* symbol, so check the full symbol table (nm), not the
+          # dynamic one, and not the string table: a release build may not
+          # leave the name in .rodata.
+          nm "$LIB" | grep -q 'fpi_device_egis0575_get_type' \
             || { echo "::error::egis0575 GType missing from library"; exit 1; }
+          echo "driver GType registered"
 
           # The threshold override from this repo must be present.
           strings "$LIB" | grep -q 'EGIS0575_FINGER_THRESHOLD' \

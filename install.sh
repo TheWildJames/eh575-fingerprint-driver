@@ -221,9 +221,35 @@ EOF
 # --------------------------------------------------------- verify
 say "Verifying"
 LIB=$(find "$PREFIX" -name 'libfprint-2.so.2.*' -type f -print -quit)
-strings "$LIB" | grep -q 'fpi_device_egis0575_get_type' \
-  || die "driver GType missing from $LIB"
-echo "  driver is present in the built library"
+test -n "$LIB" || die "shared library not found under $PREFIX"
+
+# The driver registers its GType as a *local* symbol, so it will not appear in
+# the dynamic symbol table (nm -D) and a release build may not leave the name
+# in the string table either. Check for the object file and the local symbol.
+DRVOBJ=$(find "$HOME/.cache/eh575-build/libfprint" -name '*egis0575*.o' -print -quit)
+test -n "$DRVOBJ" || die "egis0575 object file was never compiled"
+echo "  driver object: ${DRVOBJ#$HOME/}"
+
+if nm "$LIB" 2>/dev/null | grep -q 'fpi_device_egis0575_get_type'; then
+  echo "  driver GType present in the library"
+else
+  die "driver GType missing from $LIB"
+fi
+
+# The threshold override from this repo must have made it into the binary.
+if strings "$LIB" | grep -q 'EGIS0575_FINGER_THRESHOLD'; then
+  echo "  threshold override present"
+else
+  die "threshold override missing from $LIB"
+fi
+
+# And the user-visible promise: the device is advertised as supported.
+SD="$HOME/.cache/eh575-build/libfprint/build-local/libfprint/fprint-list-supported-devices"
+if [ -x "$SD" ]; then
+  "$SD" | grep -q '1c7a:0575' \
+    && echo "  1c7a:0575 listed as supported" \
+    || die "1c7a:0575 is not in the supported device list"
+fi
 
 cat <<EOF
 
