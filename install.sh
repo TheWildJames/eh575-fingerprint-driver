@@ -218,6 +218,11 @@ export PKG_CONFIG_PATH="$PCDIR\${PKG_CONFIG_PATH:+:\$PKG_CONFIG_PATH}"
 export EGIS0575_FINGER_THRESHOLD="\${EGIS0575_FINGER_THRESHOLD:-0x03}"
 EOF
 
+# NOTE: every `nm ... | grep -q` below is written without pipefail trouble.
+# Under `set -o pipefail`, `grep -q` exits as soon as it matches, which SIGPIPEs
+# nm and makes the whole pipeline report failure. Redirect to a variable and
+# test that instead.
+
 # --------------------------------------------------------- verify
 say "Verifying"
 LIB=$(find "$PREFIX" -name 'libfprint-2.so.2.*' -type f -print -quit)
@@ -230,11 +235,11 @@ DRVOBJ=$(find "$HOME/.cache/eh575-build/libfprint" -name '*egis0575*.o' -print -
 test -n "$DRVOBJ" || die "egis0575 object file was never compiled"
 echo "  driver object: ${DRVOBJ#$HOME/}"
 
-if nm "$LIB" 2>/dev/null | grep -q 'fpi_device_egis0575_get_type'; then
-  echo "  driver GType present in the library"
-else
-  die "driver GType missing from $LIB"
-fi
+SYMS=$(nm "$LIB" 2>/dev/null || true)
+case "$SYMS" in
+  *fpi_device_egis0575_get_type*) echo "  driver GType present in the library" ;;
+  *) die "driver GType missing from $LIB" ;;
+esac
 
 # The threshold override from this repo must have made it into the binary.
 if strings "$LIB" | grep -q 'EGIS0575_FINGER_THRESHOLD'; then
@@ -246,9 +251,11 @@ fi
 # And the user-visible promise: the device is advertised as supported.
 SD="$HOME/.cache/eh575-build/libfprint/build-local/libfprint/fprint-list-supported-devices"
 if [ -x "$SD" ]; then
-  "$SD" | grep -q '1c7a:0575' \
-    && echo "  1c7a:0575 listed as supported" \
-    || die "1c7a:0575 is not in the supported device list"
+  if "$SD" | grep -q '1c7a:0575'; then
+    echo "  1c7a:0575 listed as supported"
+  else
+    die "1c7a:0575 is not in the supported device list"
+  fi
 fi
 
 cat <<EOF

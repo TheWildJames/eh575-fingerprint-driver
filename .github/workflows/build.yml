@@ -103,20 +103,27 @@ jobs:
 
           # The driver object must have been compiled. Meson names driver
           # objects "drivers_<name>.c.o" inside libfprint-drivers.a.p.
-          find libfprint/build -name '*egis0575*.o' | grep -q . \
+          find libfprint/build -name '*egis0575*.o' -print -quit | grep -q . \
             || { echo "::error::egis0575 was never compiled"; exit 1; }
 
           # The GType must be registered, or the driver is dead weight. It is
           # a *local* symbol, so check the full symbol table (nm), not the
           # dynamic one, and not the string table: a release build may not
           # leave the name in .rodata.
-          nm "$LIB" | grep -q 'fpi_device_egis0575_get_type' \
-            || { echo "::error::egis0575 GType missing from library"; exit 1; }
+          # Test via a variable, not `nm | grep -q`: under pipefail, grep -q
+          # exits on first match and SIGPIPEs nm, failing the whole pipeline.
+          SYMS=$(nm "$LIB")
+          case "$SYMS" in
+            *fpi_device_egis0575_get_type*) ;;
+            *) echo "::error::egis0575 GType missing from library"; exit 1 ;;
+          esac
           echo "driver GType registered"
 
           # The threshold override from this repo must be present.
-          strings "$LIB" | grep -q 'EGIS0575_FINGER_THRESHOLD' \
-            || { echo "::error::threshold override missing from library"; exit 1; }
+          case "$(strings "$LIB")" in
+            *EGIS0575_FINGER_THRESHOLD*) ;;
+            *) echo "::error::threshold override missing from library"; exit 1 ;;
+          esac
 
           echo "driver verified present in $LIB"
 
@@ -125,9 +132,12 @@ jobs:
           # This is the user-visible promise: the device shows up in the
           # supported list. Guards against a driver that builds but is not
           # actually registered in the driver tables.
-          ./libfprint/build/libfprint/fprint-list-supported-devices \
-            | grep -q '1c7a:0575' \
-            || { echo "::error::1c7a:0575 not in supported devices"; exit 1; }
+          SD=$(find libfprint/build -name 'fprint-list-supported-devices' -print -quit)
+          test -n "$SD" || { echo "::error::supported-devices tool not built"; exit 1; }
+          case "$("$SD")" in
+            *1c7a:0575*) ;;
+            *) echo "::error::1c7a:0575 not in supported devices"; exit 1 ;;
+          esac
           echo "1c7a:0575 listed as supported"
 
       - name: Build the test tools against the patched library
