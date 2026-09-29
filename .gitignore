@@ -1,0 +1,12 @@
+prefix/
+build/
+*.o
+*.so
+*.so.*
+*.pgm
+!captures/*.pgm
+fptest
+probe
+probe3
+monitor
+enroll-test
