@@ -33,6 +33,10 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
+          # gudev is deliberately omitted: libfprint treats it as optional
+          # (dependency('gudev-1.0', required: false)) and the driver does
+          # not need it. Note the real package name is libgudev-1.0-dev -
+          # libgudev-1-dev does not exist and fails the whole apt run.
           sudo apt-get install -y --no-install-recommends \
             build-essential \
             git \
@@ -46,11 +50,8 @@ jobs:
             libpixman-1-dev \
             libcairo2-dev \
             libjson-glib-dev \
-            libgudev-1-dev \
             libudev-dev \
-            libssl-dev \
-            libgirepository1.0-dev \
-            gobject-introspection
+            libssl-dev
 
       - name: Clone libfprint
         run: |
