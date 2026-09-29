@@ -40,9 +40,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential \
             git \
-            meson \
             ninja-build \
             pkg-config \
+            python3-pip \
             libglib2.0-dev \
             libglib2.0-dev-bin \
             libgusb-dev \
@@ -52,6 +52,15 @@ jobs:
             libjson-glib-dev \
             libudev-dev \
             libssl-dev
+
+      - name: Install a current meson
+        run: |
+          # Ubuntu 22.04 ships meson 0.61.2, but libfprint requires >= 0.62.0.
+          # 24.04 is new enough, but pip keeps both runners on one version and
+          # avoids the distro version drifting under us.
+          python3 -m pip install --user --upgrade "meson>=1.2"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          meson --version
 
       - name: Clone libfprint
         run: |
