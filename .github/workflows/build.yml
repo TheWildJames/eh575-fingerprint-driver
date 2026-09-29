@@ -77,12 +77,16 @@ jobs:
       - name: Configure
         run: |
           cd libfprint
+          # Build only this driver, not -D drivers=all. "all" pulls in the
+          # SPI drivers, which hard-require gudev (meson.build errors with
+          # "udev is required for SPI support" when it is absent). Naming the
+          # driver explicitly keeps the build honest and dependency-light.
           meson setup build \
             --prefix="${{ runner.temp }}/fp-prefix" \
             --buildtype=release \
             -D doc=false \
             -D introspection=false \
-            -D drivers=all \
+            -D drivers=egis0575 \
             -D udev_rules=disabled \
             -D udev_hwdb=disabled
 
