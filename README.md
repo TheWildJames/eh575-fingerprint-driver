@@ -60,7 +60,52 @@ present at all", depending on swipe quality.
 You do **not** need to replace your system libfprint. Everything below builds
 into a local prefix.
 
-## Build
+## Install
+
+```sh
+git clone https://github.com/TheWildJames/eh575-fingerprint-driver.git
+cd eh575-fingerprint-driver
+./install.sh
+```
+
+That is the whole thing. The script:
+
+- checks dependencies via `pkg-config` (it will not install packages for you)
+- builds `libgusb` into the prefix if your distro's `libgusb` has no
+  pkg-config entry, and shims `glib-mkenums` if the binary is missing while
+  `glib-2.0.pc` still advertises it (both are known packaging gaps)
+- clones libfprint, applies the driver, builds **only** `egis0575` into
+  `$PREFIX` (default `~/.local/share/eh575`)
+- builds the test tools and an `eh575-env.sh` to set the library paths
+- verifies the driver is actually in the binary before reporting success
+
+It installs nothing system-wide and does not replace your system libfprint.
+Re-running is safe.
+
+Then:
+
+```sh
+source ~/.local/share/eh575/bin/eh575-env.sh
+fptest open
+fptest capture /tmp/finger.pgm
+```
+
+`fptest open` should print `scan type: SWIPE` and
+`OK: device functional under the patched driver`.
+
+You will need USB access, since the raw device node is root-only:
+
+```sh
+sudo setfacl -m u:$USER:rw /dev/bus/usb/XXX/YYY
+```
+
+Find `XXX/YYY` with `lsusb -d 1c7a:0575` and `lsusb -t`. This is cleared on
+reboot; the numbers change between boots.
+
+## Build from source manually
+
+<details>
+<summary>If you would rather not use the script</summary>
 
 ```sh
 git clone https://gitlab.freedesktop.org/libfprint/libfprint.git
@@ -72,37 +117,38 @@ git apply /path/to/this/repo/patches/0001-add-egis0575-driver.patch
 
 # build into a local prefix so your system libfprint is untouched
 meson setup build --prefix=$HOME/fp-prefix \
-    -D doc=false -D introspection=false -D drivers=all \
-    -D udev_rules=disabled -D udev_hwdb=disabled
+    --buildtype=release \
+    -D doc=false \
+    -D introspection=false \
+    -D drivers=egis0575 \
+    -D udev_rules=disabled \
+    -D udev_hwdb=disabled
 ninja -C build
 ninja -C build install
 ```
 
-If `meson` fails with `Dependency 'glib-2.0' tool variable 'glib_mkenums'
-contains erroneous value`, the `glib-mkenums` helper is missing (it ships in
-`glib2-devel`). Either install that package, or drop a copy into your prefix and
-point `PKG_CONFIG_PATH` at a local `glib-2.0.pc` with the corrected path.
+Notes:
 
-## Permissions
+- Build `-D drivers=egis0575`, **not** `-D drivers=all`. `all` pulls in the
+  SPI drivers, which hard-require gudev and abort configure with
+  `udev is required for SPI support`.
+- Do not pass `-D vapi=` or `-D docs=`; those options belong to libgusb, not
+  libfprint, and meson rejects unknown options.
+- meson must be >= 0.62.0. Some distros (Ubuntu 22.04) ship 0.61.2.
+- On Debian/Ubuntu the library installs to `lib/x86_64-linux-gnu`, not `lib`.
+  Find the real path rather than assuming it:
+  ```sh
+  PCDIR=$(dirname "$(find $HOME/fp-prefix -name libfprint-2.pc -print -quit)")
+  export PKG_CONFIG_PATH="$PCDIR${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+  export LD_LIBRARY_PATH="$(dirname "$PCDIR")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  ```
+- The public headers install to `include/libfprint-2/`, and the umbrella header
+  is `fprint.h`, **not** `libfprint-2.h`.
+- If configure fails with `tool variable 'glib_mkenums' contains erroneous
+  value`, your `glib-2.0.pc` advertises a `glib-mkenums` that is not
+  installed. `install.sh` handles this automatically.
 
-libusb needs **write** access to the raw USB node. By default it is root-only:
-
-```
-crw-rw-r-- 1 root root 189, 259 ... /dev/bus/usb/003/004
-```
-
-A temporary grant, for testing, which a reboot clears:
-
-```sh
-sudo setfacl -m u:$USER:rw /dev/bus/usb/003/004
-```
-
-Revoke with `sudo setfacl -x u:$USER /dev/bus/usb/003/004`.
-
-The bus and device numbers change across reboots, so a permanent udev rule is
-better if you decide to keep this. No udev rule is installed by this project.
-
-## Usage
+</details>
 
 Confirm the driver claims your device:
 
@@ -111,20 +157,18 @@ LD_LIBRARY_PATH=$HOME/fp-prefix/lib \
     $HOME/fp-prefix/bin/fprint-list-supported-devices | grep 0575
 ```
 
-Then use the tools in `tools/`. See [tools/README.md](tools/README.md) for build
-commands and what each one does.
+Then use the tools in `tools/`. See [tools/README.md](tools/README.md) for what
+each one does.
 
 The short version:
 
 ```sh
+export PKG_CONFIG_PATH=$HOME/fp-prefix/lib/pkgconfig
 export LD_LIBRARY_PATH=$HOME/fp-prefix/lib
-gcc -o fptest tools/fptest2.c -I$HOME/fp-prefix/include \
-    -I$HOME/fp-prefix/include/libfprint-2 -I$HOME/fp-prefix/include/gusb-1 \
+gcc -o fptest tools/fptest2.c \
+    -I$HOME/fp-prefix/include -I$HOME/fp-prefix/include/libfprint-2 \
     $(pkg-config --cflags gio-unix-2.0 gobject-2.0 glib-2.0) \
     $(pkg-config --libs libfprint-2 gusb gio-unix-2.0)
-
-./fptest open
-./fptest capture finger.pgm
 ```
 
 A swipe sensor needs a **slow, steady swipe of the whole fingertip**. Partial
