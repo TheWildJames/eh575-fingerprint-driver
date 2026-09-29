@@ -95,8 +95,11 @@ jobs:
 
       - name: Verify the driver is actually in the binary
         run: |
-          LIB=libfprint/build/libfprint/libfprint-2.so.2.0.0
-          test -f "$LIB"
+          # Locate the library rather than assuming a libdir: Ubuntu uses a
+          # multiarch path, other distros do not.
+          LIB=$(find libfprint/build -name 'libfprint-2.so.2.*' -type f -print -quit)
+          test -n "$LIB" || { echo "::error::libfprint shared object not found"; exit 1; }
+          echo "library: $LIB"
 
           # The driver object must have been compiled. Meson names driver
           # objects "drivers_<name>.c.o" inside libfprint-drivers.a.p.
@@ -128,14 +131,27 @@ jobs:
           PFX="${{ runner.temp }}/fp-prefix"
           ninja -C libfprint/build install
 
-          # The freshly installed prefix must be on both search paths. Without
-          # PKG_CONFIG_PATH, pkg-config cannot see libfprint-2.pc and the
-          # tools fail with "Package libfprint-2 was not found".
-          export PKG_CONFIG_PATH="$PFX/lib/pkgconfig"
-          export LD_LIBRARY_PATH="$PFX/lib"
-          pkg-config --modversion libfprint-2
+          # Debian/Ubuntu use a multiarch libdir, so libfprint installs into
+          # lib/x86_64-linux-gnu rather than plain lib. Derive both paths from
+          # the installed .pc file rather than assuming a layout.
+          PCDIR=$(dirname "$(find "$PFX" -name 'libfprint-2.pc' -print -quit)")
+          test -d "$PCDIR" || { echo "::error::libfprint-2.pc not found under $PFX"; exit 1; }
 
-          CFLAGS="-I$PFX/include -I$PFX/include/libfprint-2 -I$PFX/include/gusb-1 \
+          # libdir is the parent of the pkgconfig dir.
+          LIBDIR=$(dirname "$PCDIR")
+          # Prepend, do not replace: the system libgusb and glib .pc files
+          # live in the default search path and are still needed.
+          export PKG_CONFIG_PATH="$PCDIR${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+          export LD_LIBRARY_PATH="$LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          echo "libdir: $LIBDIR"
+          pkg-config --modversion libfprint-2 gusb
+
+          # Include dirs: libfprint installs its headers under
+          # include/libfprint-2 (umbrella header is fprint.h, not
+          # libfprint-2.h). gusb.h comes from whichever prefix provides gusb,
+          # so ask pkg-config where that is instead of assuming.
+          GUSBC=$(pkg-config --cflags gusb)
+          CFLAGS="-I$PFX/include -I$PFX/include/libfprint-2 $GUSBC \
                   $(pkg-config --cflags gio-unix-2.0 gobject-2.0 glib-2.0 json-glib-1.0)"
           LIBS="$(pkg-config --libs libfprint-2 gusb gio-unix-2.0)"
 
