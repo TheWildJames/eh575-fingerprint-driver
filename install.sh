@@ -25,16 +25,15 @@ die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 # rather than guessing distro package names, which differ between Arch and
 # Debian and were wrong often enough to be worth avoiding.
 say "Checking build dependencies"
-MISSING_PC=(gusb gio-unix-2.0 gobject-2.0 glib-2.0 cairo pixman-1 json-glib-1.0)
+NEEDED_PC=(gusb gio-unix-2.0 gobject-2.0 glib-2.0 cairo pixman-1 json-glib-1.0)
+MISSING_PC=()
 MISSING_BIN=()
 for m in meson ninja gcc git curl tar; do
   command -v "$m" &>/dev/null || MISSING_BIN+=("$m")
 done
-for p in "${MISSING_PC[@]}"; do
-  pkg-config --exists "$p" 2>/dev/null || MISSING_PC+=("$p [pkg-config]")
+for p in "${NEEDED_PC[@]}"; do
+  pkg-config --exists "$p" 2>/dev/null || MISSING_PC+=("$p")
 done
-# shellcheck disable=SC2206
-MISSING_PC=($(printf '%s\n' "${MISSING_PC[@]}" | sort -u))
 
 if [ ${#MISSING_BIN[@]} -gt 0 ] || [ ${#MISSING_PC[@]} -gt 0 ]; then
   [ ${#MISSING_BIN[@]} -gt 0 ] && warn "missing programs: ${MISSING_BIN[*]}"
@@ -53,21 +52,27 @@ fi
 # glib-2.0.pc points at /usr/bin/glib-mkenums, which glib2-devel owns).
 # Detect it and build libgusb into the prefix if needed.
 if ! pkg-config --exists gusb 2>/dev/null; then
+  if ! command -v meson &>/dev/null; then
+    die "libgusb is not visible to pkg-config and meson is unavailable to build it.
+     On Arch/CachyOS:  sudo pacman -S meson libgusb"
+  fi
   say "libgusb not found via pkg-config, building it into the prefix"
-  GUSB_SRC="$HOME/.cache/eh575-build/libgusb"
+  GUSB_SRC="$HOME/.cache/eh575-build/libgusb-0.4.9"
   if [ ! -d "$GUSB_SRC" ]; then
     mkdir -p "$(dirname "$GUSB_SRC")"
-    curl -sL -o /tmp/libgusb.tar.xz \
+    curl -fsSL -o /tmp/libgusb-0.4.9.tar.xz \
       https://github.com/hughsie/libgusb/releases/download/0.4.9/libgusb-0.4.9.tar.xz \
       || die "could not download libgusb"
-    tar xf /tmp/libgusb.tar.xz -C "$(dirname "$GUSB_SRC")"
+    tar xf /tmp/libgusb-0.4.9.tar.xz -C "$(dirname "$GUSB_SRC")"
   fi
+  say "configuring libgusb"
   meson setup "$GUSB_SRC/build" "$GUSB_SRC" --prefix="$PREFIX" \
       --buildtype=release -D docs=false -D introspection=false -D vapi=false \
-      >/dev/null 2>&1 || die "libgusb configure failed"
-  ninja -C "$GUSB_SRC/build" >/dev/null || die "libgusb build failed"
-  ninja -C "$GUSB_SRC/build" install >/dev/null || die "libgusb install failed"
+      || die "libgusb configure failed (run without the redirect to see why)"
+  ninja -C "$GUSB_SRC/build" || die "libgusb build failed"
+  ninja -C "$GUSB_SRC/build" install || die "libgusb install failed"
   export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+  export LD_LIBRARY_PATH="$PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
   pkg-config --exists gusb || die "libgusb still not visible after install"
   say "libgusb installed into prefix"
 fi
